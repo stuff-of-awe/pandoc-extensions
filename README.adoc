@@ -1,0 +1,33 @@
+== Pandoc Extensions
+
+https://www.bestpractices.dev/en/projects/new?repo_url=https://github.com/hyperpolymath/info[image:https://img.shields.io/badge/OpenSSF-Best_Practices-green?logo=openssourcesecurity[OpenSSF
+Best Practices]]
+
+General info on pandoc extensions.
+
+=== Filters
+
+A curated list of pandoc Lua filters in separate repositories.
+
+* https://github.com/pandoc-ext/abstract-section[abstract-section] –
+allows to write abstracts as a section in the body (instead of having to
+put it into the metadata).
+* https://github.com/pandoc-ext/diagram[diagram] – convert diagram code
+to images; includes support for Ti__k__Z, PlantUML, GraphViz (dot), and
+more.
+* https://github.com/b3/include-code-files[include-code-files] – include
+code from source files.
+* https://github.com/pandoc-ext/pagebreak[pagebreak] – manually insert
+page breaks.
+* https://github.com/pandoc-ext/pretty-url[pretty-urls] – removes the
+protocol prefix from link descriptions.
+* https://github.com/pandoc-ext/section-bibliographies[section-bibliographies]
+– creates a separate bibliography for each section of a document.
+* https://github.com/fxpar/markdown-to-bootstrap-pandoc-lua-filter[markdown-to-bootstrap]:
+convert Markdown into bootstrap components (cards, jumbotrons,
+carousels, accordions)
+
+==== Templates
+
+* {blank}
+* KOMA-Script LaTeX document class.
