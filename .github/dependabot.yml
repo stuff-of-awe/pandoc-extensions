@@ -13,6 +13,26 @@ updates:
       actions:
         patterns:
           - "*"
+        # A hold inside a group MUST be an exclude-pattern: an update-level
+        # `ignore` is not honoured for grouped updates (standards#1037).
+        # Active estate hold (nexia-list#100, standards#1005): github/codeql-action
+        # v4.38.1 fails GitHub workflow STARTUP estate-wide (zero jobs, no error
+        # text); 40 repositories and 94 refs were rolled back to v4.38.0. The
+        # trailing wildcard is required so the subpath actions (…/init,
+        # …/analyze, …/upload-sarif) match. Lift once a >= 4.38.2 release is
+        # verified clean, on one canary repository, before it reaches this one.
+        #
+        # Rendered from this repository's deed by hypatia
+        # `estate-dependabot-render.sh` in the estate's own policy; reproduced
+        # here because this repository's copy of the RSR template predates the
+        # hold, and without it the weekly grouped bump re-raises the blocked
+        # version within hours (measured: nexia-list#101).
+        exclude-patterns:
+          - "github/codeql-action*"
+    ignore:
+      # Kept for the ungrouped (security-update) path, which does honour it.
+      - dependency-name: "github/codeql-action*"
+        versions: [">= 4.38.1"]
     open-pull-requests-limit: 2
 
   # Rust/Cargo
