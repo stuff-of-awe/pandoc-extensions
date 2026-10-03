@@ -40,3 +40,33 @@ jobs:
     # `secrets.*` anywhere; `secrets: inherit` would hand the whole store to a
     # workflow that consumes none of it.
     uses: hyperpolymath/standards/.github/workflows/ci-pipeline.yml@2eb9bb19d43b6285466ca36b92d1324a09e7a207
+    with:
+      # ── Why this repository sets fail_on_no_ecosystem: false ──────────────
+      # This repository tracks NO code: AsciiDoc, licence texts, governance
+      # prose, `.github/` and `mise.toml`. The pipeline's ecosystem probe
+      # (Cargo.toml, *.ncl, rescript.json/bsconfig.json/*.res, v.mod,
+      # *.cabal/stack.yaml/*.hs, deno.json(c)) therefore matches zero tracked
+      # files, and `detect` refuses to report success on a zero denominator —
+      # by design, because every lint/format gate behind it would be vacuous:
+      #
+      #     No known ecosystem detected (denominator = 0). Every lint and format
+      #     gate would be vacuous, so this pipeline refuses to report success.
+      #
+      # That refusal names its own escape hatch, and this is it: "Add the
+      # ecosystem's marker file, or call this workflow with
+      # fail_on_no_ecosystem: false and say why." There is no ecosystem marker
+      # to add that would not be an invention (a `package.json` or a `Cargo.toml`
+      # planted to lift the denominator is exactly the vacuous gate the refusal
+      # exists to prevent), so the honest switch is the second one.
+      #
+      # What this does NOT do: claim a pass. With the probe disabled `detect`
+      # prints `::warning::… continuing with nothing checked`, and the report
+      # job still tabulates every gate as `skipped` under its own line, "A
+      # skipped gate examined nothing. It is not a pass." The secret scan —
+      # deliberately NOT gated on `detect` — still runs and still gates.
+      #
+      # It is deliberately NOT an entry in `.machine_readable/pipeline-allow.txt`:
+      # that ledger is shrink-only and is seeded ONLY from repositories whose
+      # gates really FAILED, earned by observation (standards#1108 §2). Nothing
+      # here failed; there is nothing to grandfather.
+      fail_on_no_ecosystem: false

@@ -1,4 +1,57 @@
 # SPDX-License-Identifier: MPL-2.0
+# SPDX-FileCopyrightText: 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+#
+# CodeQL — the `actions` language only. This repository tracks no compilable
+# source: 8 workflows, AsciiDoc and licence files. The workflows ARE the
+# security surface worth analysing.
+#
+# ── PIN PROVENANCE (why the SHA below, and not the old one) ─────────────────
+# The previous pin, `github/codeql-action/*@29b1f65c1f735799893313399435a59f5
+# 4045865`, was a PHANTOM: no commit with that SHA has ever existed in
+# github/codeql-action. Actions resolves `uses:` refs only at run time, so the
+# job died at "Set up job" with:
+#     Unable to resolve action `github/codeql-action@29b1f65c…`,
+#     unable to find version `29b1f65c…`
+# An unresolvable `uses:` produces the loudest failure we have (a job that never
+# starts), but the same defect class is silent when a workflow has no other
+# trigger. Tracked estate-wide as hyperpolymath/standards#669; this repository's
+# occurrence is hyperpolymath/info#16.
+#
+# Resolved tags (verified with `git ls-remote --tags` and the commits API,
+# 2026-10-03 — note the annotated tags peel with `^{}`):
+#     v4.37.9 -> cdf488f595d80d6e07e03d4674febd5ab45fa938   (the standards#669 remap)
+#     v4.38.0 -> b96794f015dfd88f77b49b1c93e0fa7110f94c63   <- pinned below
+#     v4.38.1 -> 1c5b675653bb5c22dbe9b12b556ec555138e09fd   BLOCKED estate-wide
+#     v4.38.2 -> 2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2   exists; hold not lifted
+#
+# v4.38.1 is held estate-wide: it fails GitHub workflow STARTUP (zero jobs
+# dispatched, no error text) on every repository that took it — 40 repositories
+# and 94 refs rolled back in one campaign (hyperpolymath/nexia-list#100,
+# hyperpolymath/standards#973). v4.38.2 exists upstream but the estate hold
+# (docs/DEPENDABOT-POLICY.adoc) lifts only once a >= 4.38.2 release is verified
+# clean, so this pins the last release the estate verified green. The Dependabot
+# hold for that is in .github/dependabot.yml — without it the weekly grouped
+# actions update re-raises the blocked bump within hours.
+#
+# ── PRIVATE-REPOSITORY BEHAVIOUR (the second, independent defect) ───────────
+# CodeQL's only output channel is the code-scanning surface, and a PRIVATE
+# repository has none unless GitHub Code Security is enabled. `analyze` then
+# dies at the upload with:
+#     Code scanning is not enabled for this repository. Please enable code
+#     scanning in the repository settings.
+# That is an account/licensing fact, not a workflow defect, so this file probes
+# the surface and chooses the upload mode accordingly:
+#
+#   surface present -> upload: always   (normal publishing)
+#   surface absent  -> upload: never    (analysis still runs; SARIF kept as an
+#                                        artifact; the job goes green instead of
+#                                        failing on a surface it cannot create)
+#   probe unclear   -> hard failure. "Could not tell" must never be read as
+#                      "cannot publish" — the same determinate/indeterminate
+#                      split scripts/check-action-pins-resolve.sh uses.
+#
+# The probe result is re-read on every run, so enabling Code Security (or making
+# the repository public) arms publishing with no further change.
 name: CodeQL
 
 on:
@@ -9,6 +62,13 @@ on:
   schedule:
     - cron: '0 0 * * 0'
 
+# Estate guardrail: cancel superseded runs so re-pushes don't pile up queued
+# runs against the shared account-wide concurrency pool. Safe here because this
+# workflow only performs read-only checks with no publish or mutation.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   actions: read
   contents: read
@@ -18,6 +78,7 @@ jobs:
   analyze:
     name: CodeQL Analysis
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       actions: read
       contents: read
@@ -29,17 +90,108 @@ jobs:
           - language: actions
             build-mode: none
     steps:
+      # ── Is there a code-scanning surface to publish to? ───────────────────
+      # Probes the feature, with the SAME endpoint family the upload would use,
+      # and only a determinate "not enabled" answer selects artifact-only mode.
+      # Determinacy is the whole point: an API error we cannot classify fails
+      # closed instead of silently degrading CodeQL to an artifact nobody reads.
+      - name: Probe the code-scanning surface
+        id: surface
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+
+          BODY_FILE="$(mktemp)"
+          CODE="$(curl -sS -o "$BODY_FILE" -w '%{http_code}' \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/code-scanning/analyses?per_page=1" \
+            || echo 000)"
+          BODY="$(cat "$BODY_FILE")"
+
+          # GitHub's own enablement wording, matched case-insensitively — the
+          # action itself discriminates this failure by the same strings
+          # (codeql-action src/api-client.ts, getFeatureEnablementError).
+          case "$(printf '%s' "$BODY" | tr '[:upper:]' '[:lower:]')" in
+            *'code scanning is not enabled for this repository'*|\
+            *'code security must be enabled'*|\
+            *'advanced security must be enabled'*)
+              echo "upload=never" >> "$GITHUB_OUTPUT"
+              echo "available=false" >> "$GITHUB_OUTPUT"
+              echo "::warning title=CodeQL (private repository)::No code-scanning surface (HTTP ${CODE}): the analysis runs, its SARIF is kept as an artifact, and nothing is published."
+              {
+                echo "### CodeQL — analysis runs, publishing disabled"
+                echo ""
+                echo "The code-scanning API answered **HTTP ${CODE}**:"
+                echo ""
+                echo '```'
+                printf '%s\n' "$BODY"
+                echo '```'
+                echo ""
+                echo "This is a determinate answer: a **private** repository has no"
+                echo "code-scanning surface unless **GitHub Code Security** is enabled"
+                echo "for it. The analysis is still run and its SARIF is attached to"
+                echo "this run as the \`codeql-sarif\` artifact — but no alert is"
+                echo "raised anywhere, because there is nowhere to raise it."
+                echo ""
+                echo "To arm publishing: Settings → Code security → enable Code"
+                echo "Security (or make the repository public). No workflow change is"
+                echo "needed — this probe re-runs every time."
+              } >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            *)
+              if [ "$CODE" = "200" ]; then
+                echo "upload=always" >> "$GITHUB_OUTPUT"
+                echo "available=true" >> "$GITHUB_OUTPUT"
+                echo "::notice::Code-scanning surface present (HTTP 200) — results will be published."
+              else
+                echo "::error title=CodeQL surface probe INCONCLUSIVE::HTTP ${CODE} from the code-scanning API: ${BODY}"
+                echo "This is INDETERMINATE, not 'not enabled'. Failing closed rather than silently downgrading the analysis to an artifact."
+                exit 1
+              fi
+              ;;
+          esac
+
       - name: Checkout repository
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@29b1f65c1f735799893313399435a59f54045865 # v3
+        uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
 
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@29b1f65c1f735799893313399435a59f54045865 # v3
-
+      # No `Autobuild` step: build-mode `none` means nothing is compiled, the
+      # `actions` language has no build to detect, and the estate's canonical
+      # CodeQL workflow (standards/.github/workflows/codeql-reusable.yml) does
+      # not run one either. It was a third reference to the phantom pin.
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@29b1f65c1f735799893313399435a59f54045865 # v3
+        id: analyze
+        uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        with:
+          # `always` when there is a surface; `never` when there determinately is
+          # not. `never` makes the action skip the code-scanning API call
+          # entirely — the CLI still writes its SARIF into `output`.
+          upload: ${{ steps.surface.outputs.upload }}
+          output: ${{ github.workspace }}/codeql-results
+          category: /language:${{ matrix.language }}
+
+      - name: Keep the SARIF (no surface to publish to)
+        # `if-no-files-found: warn`, explicitly: with `upload: never` the CLI
+        # still writes its SARIF into the `output` directory, but an empty
+        # directory must not turn a green analysis into a red job — and a
+        # silently missing artifact must not read as "nothing found" either.
+        # A warning is the honest middle: the summary above already says where
+        # the findings would have gone.
+        if: steps.surface.outputs.available == 'false'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codeql-sarif
+          path: ${{ steps.analyze.outputs.sarif-output }}
+          if-no-files-found: warn
+          retention-days: 30
